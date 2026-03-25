@@ -10,6 +10,10 @@
         type: A
         value: "45.32.202.94"
         proxied: false
+    cloudflare_dns_records_absent:
+      - record: unity
+        type: A
+        value: "155.138.253.242"
 
   roles:
     - role: cloudflare-dns

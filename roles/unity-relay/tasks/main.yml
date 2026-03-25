@@ -19,17 +19,14 @@
     reload: yes
   when: unity_relay_ip_forward | default(true)
 
-- name: Remove old DNAT rules (cleanup)
-  iptables:
-    table: nat
-    chain: PREROUTING
-    protocol: "{{ item.proto }}"
-    destination_port: "{{ item.port }}"
-    jump: DNAT
-    to_destination: "{{ item.old_target }}:{{ item.port }}"
-    state: absent
-  loop: "{{ unity_relay_old_targets | default([]) | product(['tcp', 'udp']) | map('reverse') | map('list') | map('combine_port_proto') | list }}"
-  when: unity_relay_old_targets is defined
+- name: Remove any existing DNAT rules for managed ports
+  shell: |
+    for port in {{ unity_relay_ports | join(' ') }}; do
+      iptables -t nat -S PREROUTING | grep "dpt:$port" | grep DNAT | sed 's/-A/-D/' | while read rule; do
+        iptables -t nat $rule
+      done
+    done
+  changed_when: false
   failed_when: false
 
 - name: Configure DNAT rules for Unity Intercom (TCP)
