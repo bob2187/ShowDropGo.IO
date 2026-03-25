@@ -1,0 +1,10 @@
+---
+# Cloud VM base defaults
+
+# SSH hardening
+ssh_password_auth: false
+ssh_permit_root_login: "prohibit-password"
+ssh_port: 22
+
+# User to deploy SSH keys to (root for cloud VMs)
+cloud_ssh_user: root

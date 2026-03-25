@@ -1,0 +1,12 @@
+---
+# Unity Intercom relay defaults
+
+# Target Tailscale IP for Unity Intercom (Mac Mini)
+unity_relay_target_ip: "100.75.89.91"
+
+# Ports to forward (TCP and UDP)
+unity_relay_ports:
+  - 20101
+
+# Enable IP forwarding
+unity_relay_ip_forward: true

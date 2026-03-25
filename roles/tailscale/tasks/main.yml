@@ -1,0 +1,166 @@
+---
+# Tailscale role: Install and enable Tailscale VPN
+
+- name: Install curl (needed for install script)
+  apt:
+    name: curl
+    state: present
+
+- name: Download Tailscale install script
+  get_url:
+    url: https://tailscale.com/install.sh
+    dest: /tmp/tailscale-install.sh
+    mode: '0755'
+
+- name: Run Tailscale install script
+  command: /tmp/tailscale-install.sh
+  args:
+    creates: /usr/bin/tailscale
+
+- name: Enable and start tailscaled service
+  service:
+    name: tailscaled
+    enabled: yes
+    state: started
+
+# Check current Tailscale state
+- name: Check Tailscale status
+  command: tailscale status
+  register: tailscale_status_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Get Tailscale status JSON
+  command: tailscale status --json
+  register: tailscale_status_json
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Determine Tailscale state
+  set_fact:
+    tailscale_logged_out: "{{ 'Logged out' in tailscale_status_check.stdout }}"
+    tailscale_self_offline: "{{ (tailscale_status_json.stdout | from_json).Self.Online | default(false) == false }}"
+  when: tailscale_status_json.rc == 0 and tailscale_status_json.stdout != ''
+  ignore_errors: true
+
+- name: Set defaults if status check failed
+  set_fact:
+    tailscale_logged_out: true
+    tailscale_self_offline: true
+  when: tailscale_status_json.rc != 0 or tailscale_status_json.stdout == ''
+
+- name: Determine if authentication needed
+  set_fact:
+    # Auth needed if: logged out, offline, or force_reauth requested
+    tailscale_needs_auth: "{{ tailscale_logged_out | default(true) or tailscale_self_offline | default(true) or (tailscale_force_reauth | default(false)) }}"
+
+# Logout if offline or force re-auth (to get fresh auth)
+- name: Logout Tailscale for re-authentication
+  command: tailscale logout
+  when:
+    - tailscale_needs_auth
+    - not tailscale_logged_out | default(true)
+  failed_when: false
+
+# Authenticate with auth key if provided
+- name: Authenticate Tailscale with auth key
+  command: tailscale up --authkey={{ tailscale_auth_key }} {{ '--accept-routes' if tailscale_accept_routes | default(false) else '' }}
+  no_log: true
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length > 0
+
+# Interactive authentication if no auth key
+- name: Start Tailscale authentication
+  shell: tailscale up {{ '--accept-routes' if tailscale_accept_routes | default(false) else '' }} 2>&1 &
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+  no_log: true
+
+- name: Wait for login URL
+  pause:
+    seconds: 3
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+
+- name: Get login URL from status
+  command: tailscale status
+  register: tailscale_login_url
+  failed_when: false
+  no_log: true
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+
+- name: Extract login URL
+  set_fact:
+    tailscale_url: "{{ tailscale_login_url.stdout | regex_search('https://login.tailscale.com/[a-zA-Z0-9/]+') }}"
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+    - tailscale_login_url.stdout is defined
+
+- name: Authenticate Tailscale
+  pause:
+    prompt: |
+
+      ══════════════════════════════════════════════════════════════════
+                         TAILSCALE AUTHENTICATION
+      ══════════════════════════════════════════════════════════════════
+
+      Open this URL to authenticate {{ inventory_hostname }}:
+
+      {{ tailscale_url }}
+
+      Press ENTER to continue (will wait for approval)
+      Type 'skip' + ENTER to skip Tailscale auth
+  register: tailscale_auth_prompt
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+    - tailscale_url is defined and tailscale_url | length > 0
+
+- name: Check if user skipped auth
+  set_fact:
+    tailscale_auth_skipped: "{{ tailscale_auth_prompt.user_input | default('') | lower == 'skip' }}"
+  when: tailscale_auth_prompt is defined
+
+- name: Wait for Tailscale to connect
+  command: tailscale status --json
+  register: tailscale_verify
+  failed_when: false
+  until: >
+    tailscale_verify.rc == 0 and
+    (tailscale_verify.stdout | from_json).Self.Online | default(false) == true
+  retries: 60
+  delay: 5
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+    - not tailscale_auth_skipped | default(false)
+
+- name: Tailscale auth skipped
+  debug:
+    msg: "Tailscale authentication skipped. Run playbook again to authenticate later."
+  when: tailscale_auth_skipped | default(false)
+
+# Ensure accept-routes setting is applied (even if already connected)
+- name: Apply Tailscale route settings
+  command: tailscale up {{ '--accept-routes' if tailscale_accept_routes | default(false) else '--accept-routes=false' }}
+  when: not tailscale_needs_auth | default(false)
+  changed_when: false
+  failed_when: false
+
+- name: Get final Tailscale status
+  command: tailscale status
+  register: tailscale_final_status
+  changed_when: false
+  failed_when: false
+
+- name: Display Tailscale status
+  debug:
+    msg: "{{ tailscale_final_status.stdout_lines }}"

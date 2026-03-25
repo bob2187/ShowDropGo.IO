@@ -1,0 +1,49 @@
+---
+# showdropgo-macos-apps: Install apps for Unity Intercom server host
+# Homebrew packages
+- name: Install Homebrew formulae
+  community.general.homebrew:
+    name:
+      - tailscale      # managed by tailscale-macos role, listed here for reference
+      - cloudflared    # Cloudflare Tunnel
+    state: present
+  become: false
+
+- name: Install Homebrew casks
+  community.general.homebrew_cask:
+    name:
+      - google-chrome
+      - sonobus
+      - amphetamine
+      - loopback
+    state: present
+  become: false
+
+# Stored PKG installers (licensed/commercial apps)
+# Place installer files in roles/showdropgo-macos-apps/files/
+# - unity-intercom.pkg
+# - dante-virtual-soundcard.pkg
+# - dante-via.pkg
+- name: Check for stored PKG installers
+  local_action: stat path="{{ role_path }}/files/{{ item }}"
+  register: pkg_files
+  loop:
+    - unity-intercom.pkg
+    - dante-virtual-soundcard.pkg
+    - dante-via.pkg
+  become: false
+
+- name: Copy PKG installers to host
+  copy:
+    src: "{{ item.item }}"
+    dest: "/tmp/{{ item.item }}"
+    mode: '0644'
+  loop: "{{ pkg_files.results }}"
+  when: item.stat.exists
+  become: false
+
+- name: Install PKG installers
+  command: installer -pkg /tmp/{{ item.item }} -target /
+  loop: "{{ pkg_files.results }}"
+  when: item.stat.exists
+  become: true

@@ -1,0 +1,3 @@
+---
+# macOS host defaults
+tailscale_accept_routes: false

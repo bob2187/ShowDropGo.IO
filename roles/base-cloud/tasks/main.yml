@@ -1,0 +1,63 @@
+---
+# Base role for cloud VMs: SSH key deployment and hardening
+
+- name: Set hostname
+  hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Update /etc/hosts with hostname
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1'
+    line: "127.0.1.1\t{{ inventory_hostname }}"
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Deploy SSH authorized keys
+  authorized_key:
+    user: "{{ cloud_ssh_user }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ admin_ssh_keys | default([]) }}"
+  when: admin_ssh_keys | default([]) | length > 0
+
+- name: Disable SSH password authentication
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PasswordAuthentication'
+    line: "PasswordAuthentication {{ 'yes' if ssh_password_auth else 'no' }}"
+    state: present
+  notify: Restart SSH
+
+- name: Configure root login policy
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin'
+    line: "PermitRootLogin {{ ssh_permit_root_login }}"
+    state: present
+  notify: Restart SSH
+
+- name: Disable empty passwords
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitEmptyPasswords'
+    line: "PermitEmptyPasswords no"
+    state: present
+  notify: Restart SSH
+
+- name: Ensure SSH is enabled and running
+  service:
+    name: ssh
+    enabled: yes
+    state: started
+
+- name: Display SSH hardening status
+  debug:
+    msg: |
+      SSH hardening applied:
+        - Password auth: {{ 'enabled' if ssh_password_auth else 'DISABLED' }}
+        - Root login: {{ ssh_permit_root_login }}
+        - Keys deployed for: {{ cloud_ssh_user }}

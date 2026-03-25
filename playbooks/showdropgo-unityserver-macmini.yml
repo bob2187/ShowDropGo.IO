@@ -1,0 +1,62 @@
+---
+- name: ShowDropGo Unity Server Mac Mini
+  hosts: showdropgo-unityserver-macmini
+  gather_facts: false
+
+  pre_tasks:
+    - name: Test connectivity
+      ping:
+      tags: always
+
+    - name: Install Xcode Command Line Tools
+      raw: xcode-select -p || xcode-select --install
+      register: xcode_result
+      changed_when: "'install' in xcode_result.stdout"
+      tags: always
+
+    - name: Gather facts
+      setup:
+      tags: always
+
+    - name: Display host info
+      debug:
+        msg:
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Architecture: {{ ansible_architecture }}"
+          - "User: {{ ansible_user_id }}"
+      tags: always
+
+    - name: Check if Homebrew is installed
+      stat:
+        path: /opt/homebrew/bin/brew
+      register: brew_check
+      tags: always
+
+    - name: Create Homebrew directory
+      file:
+        path: /opt/homebrew
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: admin
+        mode: "0755"
+      become: true
+      when: not brew_check.stat.exists
+      tags: always
+
+    - name: Install Homebrew
+      shell: |
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      when: not brew_check.stat.exists
+      tags: always
+
+    - name: Verify Homebrew installation
+      command: /opt/homebrew/bin/brew --version
+      changed_when: false
+      tags: always
+
+  roles:
+    - role: tailscale-macos
+      tags: tailscale
+    - role: showdropgo-macos-apps
+      tags: apps

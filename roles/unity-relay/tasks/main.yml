@@ -1,0 +1,69 @@
+---
+# Unity Intercom relay role: Configure port forwarding to Mac Mini via Tailscale
+
+- name: Install iptables-persistent
+  apt:
+    name:
+      - iptables
+      - iptables-persistent
+    state: present
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Enable IP forwarding in sysctl
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    sysctl_set: yes
+    state: present
+    reload: yes
+  when: unity_relay_ip_forward | default(true)
+
+- name: Remove old DNAT rules (cleanup)
+  iptables:
+    table: nat
+    chain: PREROUTING
+    protocol: "{{ item.proto }}"
+    destination_port: "{{ item.port }}"
+    jump: DNAT
+    to_destination: "{{ item.old_target }}:{{ item.port }}"
+    state: absent
+  loop: "{{ unity_relay_old_targets | default([]) | product(['tcp', 'udp']) | map('reverse') | map('list') | map('combine_port_proto') | list }}"
+  when: unity_relay_old_targets is defined
+  failed_when: false
+
+- name: Configure DNAT rules for Unity Intercom (TCP)
+  iptables:
+    table: nat
+    chain: PREROUTING
+    protocol: tcp
+    destination_port: "{{ item }}"
+    jump: DNAT
+    to_destination: "{{ unity_relay_target_ip }}:{{ item }}"
+    state: present
+  loop: "{{ unity_relay_ports }}"
+  notify: Save iptables rules
+
+- name: Configure DNAT rules for Unity Intercom (UDP)
+  iptables:
+    table: nat
+    chain: PREROUTING
+    protocol: udp
+    destination_port: "{{ item }}"
+    jump: DNAT
+    to_destination: "{{ unity_relay_target_ip }}:{{ item }}"
+    state: present
+  loop: "{{ unity_relay_ports }}"
+  notify: Save iptables rules
+
+- name: Ensure MASQUERADE rule exists
+  iptables:
+    table: nat
+    chain: POSTROUTING
+    jump: MASQUERADE
+    state: present
+  notify: Save iptables rules
+
+- name: Display forwarding configuration
+  debug:
+    msg: "Forwarding ports {{ unity_relay_ports | join(', ') }} (TCP/UDP) to {{ unity_relay_target_ip }}"

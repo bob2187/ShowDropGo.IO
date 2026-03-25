@@ -1,0 +1,189 @@
+---
+# Tailscale role for macOS: Install via Homebrew formula and authenticate
+# Uses /opt/homebrew/bin/tailscale (Apple Silicon path)
+
+- name: Install Tailscale
+  community.general.homebrew:
+    name: tailscale
+    state: present
+  become: false
+
+- name: Deploy tailscaled LaunchDaemon plist
+  copy:
+    dest: /Library/LaunchDaemons/com.tailscale.tailscaled.plist
+    content: |
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+          <key>Label</key>
+          <string>com.tailscale.tailscaled</string>
+          <key>ProgramArguments</key>
+          <array>
+              <string>/opt/homebrew/bin/tailscaled</string>
+          </array>
+          <key>RunAtLoad</key>
+          <true/>
+          <key>KeepAlive</key>
+          <true/>
+          <key>StandardOutPath</key>
+          <string>/var/log/tailscaled.log</string>
+          <key>StandardErrorPath</key>
+          <string>/var/log/tailscaled.log</string>
+      </dict>
+      </plist>
+    mode: '0644'
+    owner: root
+    group: wheel
+  become: true
+  register: tailscaled_plist
+
+- name: Load tailscaled system daemon
+  command: launchctl bootstrap system /Library/LaunchDaemons/com.tailscale.tailscaled.plist
+  become: true
+  when: tailscaled_plist.changed
+  failed_when: false
+
+- name: Ensure tailscaled is running
+  command: launchctl print system/com.tailscale.tailscaled
+  become: true
+  register: tailscaled_status
+  changed_when: false
+  failed_when: false
+
+# Check current Tailscale state
+- name: Check Tailscale status
+  command: /opt/homebrew/bin/tailscale status
+  register: tailscale_status_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Get Tailscale status JSON
+  command: /opt/homebrew/bin/tailscale status --json
+  register: tailscale_status_json
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Determine Tailscale state
+  set_fact:
+    tailscale_logged_out: "{{ 'Logged out' in tailscale_status_check.stdout }}"
+    tailscale_self_offline: "{{ (tailscale_status_json.stdout | from_json).Self.Online | default(false) == false }}"
+  when: tailscale_status_json.rc == 0 and tailscale_status_json.stdout != ''
+  ignore_errors: true
+
+- name: Set defaults if status check failed
+  set_fact:
+    tailscale_logged_out: true
+    tailscale_self_offline: true
+  when: tailscale_status_json.rc != 0 or tailscale_status_json.stdout == ''
+
+- name: Determine if authentication needed
+  set_fact:
+    tailscale_needs_auth: "{{ tailscale_logged_out | default(true) or tailscale_self_offline | default(true) or (tailscale_force_reauth | default(false)) }}"
+
+- name: Logout Tailscale for re-authentication
+  command: /opt/homebrew/bin/tailscale logout
+  when:
+    - tailscale_needs_auth
+    - not tailscale_logged_out | default(true)
+  failed_when: false
+
+# Authenticate with auth key if provided
+- name: Authenticate Tailscale with auth key
+  command: /opt/homebrew/bin/tailscale up --authkey={{ tailscale_auth_key }} {{ '--accept-routes' if tailscale_accept_routes | default(false) else '' }}
+  no_log: true
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length > 0
+
+# Interactive authentication if no auth key
+- name: Start Tailscale authentication
+  shell: /opt/homebrew/bin/tailscale up {{ '--accept-routes' if tailscale_accept_routes | default(false) else '' }} 2>&1 &
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+  no_log: true
+
+- name: Wait for login URL
+  pause:
+    seconds: 3
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+
+- name: Get login URL from status
+  command: /opt/homebrew/bin/tailscale status
+  register: tailscale_login_url
+  failed_when: false
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+
+- name: Display raw Tailscale status (find login URL here)
+  debug:
+    msg: "{{ tailscale_login_url.stdout_lines }}"
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+    - tailscale_login_url.stdout is defined
+
+- name: Authenticate Tailscale
+  pause:
+    prompt: |
+
+      ══════════════════════════════════════════════════════════════════
+                         TAILSCALE AUTHENTICATION
+      ══════════════════════════════════════════════════════════════════
+
+      Copy the login URL from above and open it in a browser to
+      authenticate {{ inventory_hostname }}.
+
+      Press ENTER once authenticated (will verify connection)
+      Type 'skip' + ENTER to skip Tailscale auth
+  register: tailscale_auth_prompt
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+
+- name: Check if user skipped auth
+  set_fact:
+    tailscale_auth_skipped: "{{ tailscale_auth_prompt.user_input | default('') | lower == 'skip' }}"
+  when: tailscale_auth_prompt is defined
+
+- name: Wait for Tailscale to connect
+  command: /opt/homebrew/bin/tailscale status --json
+  register: tailscale_verify
+  failed_when: false
+  until: >
+    tailscale_verify.rc == 0 and
+    (tailscale_verify.stdout | from_json).Self.Online | default(false) == true
+  retries: 60
+  delay: 5
+  when:
+    - tailscale_needs_auth
+    - tailscale_auth_key | default('') | length == 0
+    - not tailscale_auth_skipped | default(false)
+
+- name: Tailscale auth skipped
+  debug:
+    msg: "Tailscale authentication skipped. Run playbook again to authenticate later."
+  when: tailscale_auth_skipped | default(false)
+
+# Ensure accept-routes setting is applied (even if already connected)
+- name: Apply Tailscale route settings
+  command: /opt/homebrew/bin/tailscale up {{ '--accept-routes' if tailscale_accept_routes | default(false) else '--accept-routes=false' }}
+  when: not tailscale_needs_auth | default(false)
+  changed_when: false
+  failed_when: false
+
+- name: Get final Tailscale status
+  command: /opt/homebrew/bin/tailscale status
+  register: tailscale_final_status
+  changed_when: false
+  failed_when: false
+
+- name: Display Tailscale status
+  debug:
+    msg: "{{ tailscale_final_status.stdout_lines }}"

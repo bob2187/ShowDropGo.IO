@@ -1,0 +1,8 @@
+---
+# SSH public keys deployed to managed hosts
+admin_ssh_keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKgbooThyK+v55PqPrCss1YRQUX99DrOKytK7EngZRTv picluster-2025"
+  - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDLnqs4pSTrpcJAikaAePE7NeV9rLiTeGqo4NwJUWIs+BXr77naIMobJ3i69WyrsSgDTJLGdzJsK240FyqKnaleCE6JqJ7Cr1/HwH1OS3hjB9Z6FA9Eu3cxfZUnxT1rTggMM19e3ULZ7CqmRJ5mcbL7NhlE1UI2GQ6iA/3dNAVd7loORa18eEC6mKemzsRZ8QWeExwUj/pswm+q7Y8tcQPJX6GbtEzL3cV4N6aAiY9zxIR66U4qzTGqh9yArgNo1T+O9c4zteZz3Oa1A50XtXmwR5aMGKkmDfEAs4iZektEtrXDVmtSlMD/W5R2JoGXFWt4IMkqM50hFWib9F5YMn5No3ZFp8MQi4nJXHq6+4hWY0eCyfasX3BQ+bPhUXJqdjF1JT42Sy8tKQ87XxtkuqeKTTUbIWFehrA8JYK3c109x+7oPvaP81uPVADV1o5g0F1F3RCtjSMmioSOVOG8AvDEWZXRswSSCE1hpLceCad2Fc+Rzcx8++ts8Lc/aycsLm8= robertstephen@MacBookPro.lan"
+
+# Tailscale auth key — pass via vault or command line
+tailscale_auth_key: ""

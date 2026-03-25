@@ -1,0 +1,9 @@
+---
+# Cloud VM defaults
+
+# Tailscale settings for cloud VMs
+tailscale_accept_routes: false
+
+# Auth key stored in vault.yml for automated deployment
+# Generate at: https://login.tailscale.com/admin/settings/keys
+# tailscale_auth_key: "{{ vault_tailscale_auth_key }}"
