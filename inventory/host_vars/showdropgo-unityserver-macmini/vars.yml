@@ -3,3 +3,20 @@
 # Hardware: Mac Mini M1, HMO location
 # Apple ID: showdropgo.io@gmail.com
 # Tailscale IP: 100.75.89.91
+# Local IP: 192.168.25.166
+
+# ------------------------------------------------------------
+# Planned software installs (manual — licenses required)
+# ------------------------------------------------------------
+# Via Homebrew (roles/showdropgo-macos-apps):
+#   - google-chrome
+#   - cloudflared
+#   - sonobus
+#   - amphetamine
+#   - loopback
+#
+# Via stored PKG (roles/showdropgo-macos-apps/files/):
+#   - unity-intercom.pkg
+#   - dante-virtual-soundcard.pkg
+#   - dante-via.pkg
+# ------------------------------------------------------------
