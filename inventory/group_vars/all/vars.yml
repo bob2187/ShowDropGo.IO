@@ -5,3 +5,8 @@ admin_ssh_keys:
 
 # Tailscale auth key — pass via vault or command line
 tailscale_auth_key: ""
+
+# Cloudflare
+cloudflare_api_token: "{{ vault_cloudflare_api_token }}"
+cloudflare_zone_id: "90b15c36c8f98a45be2dd2acb312f9d7"
+cloudflare_zone: "showdropgo.io"

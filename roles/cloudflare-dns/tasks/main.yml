@@ -1,0 +1,18 @@
+---
+# cloudflare-dns: Manage DNS records for showdropgo.io
+
+- name: Update DNS records
+  community.general.cloudflare_dns:
+    zone: "{{ cloudflare_zone }}"
+    record: "{{ item.record }}"
+    type: "{{ item.type }}"
+    value: "{{ item.value }}"
+    api_token: "{{ cloudflare_api_token }}"
+    proxied: "{{ item.proxied | default(false) }}"
+    state: present
+  loop: "{{ cloudflare_dns_records }}"
+
+- name: Display DNS update summary
+  debug:
+    msg: "{{ item.record }}.{{ cloudflare_zone }} → {{ item.value }}"
+  loop: "{{ cloudflare_dns_records }}"

@@ -1,0 +1,16 @@
+---
+- name: Update ShowDropGo DNS records
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    cloudflare_dns_records:
+      - record: unity
+        type: A
+        value: "45.32.202.94"
+        proxied: false
+
+  roles:
+    - role: cloudflare-dns
+      tags: dns
