@@ -110,14 +110,18 @@ Unity Intercom's UDP discovery only responds to RFC 1918 source IPs. Traffic arr
 - `unity_relay_target_port: 20199` in `hosts.yml` overrides the default
 
 ### Mac Mini side (`unity-local-relay` role)
-- **TCP relay**: socat listening on `100.98.252.10:20199`, forwarding to `127.0.0.1:20101` (Unity TCP listens on all interfaces)
+- **TCP relay**: socat listening on `0.0.0.0:20199`, forwarding to `127.0.0.1:20101` (Unity TCP listens on all interfaces)
 - **UDP relay**: Python script (`/usr/local/bin/unity-udp-relay.py`) with:
-  - Session tracking per client (not per-packet) — required for keepalive continuity
-  - Outgoing socket bound to `192.168.25.166` — Unity only responds to RFC 1918 sources
+  - Listens on `0.0.0.0:20199` — no Tailscale IP dependency at startup
+  - Dynamic LAN IP detection via `route -n get default` + `ipconfig getifaddr <iface>`
+  - Outgoing socket bound to detected LAN IP — Unity only responds to RFC 1918 sources
+  - Network change polling every 15s — detects subnet changes, clears sessions to rebind
+  - Session tracking per client — required for keepalive continuity
   - Background listener thread per session — handles Unity proactive keepalives
-  - 60s session timeout
+  - 60s session timeout with cleanup loop
 - Both run as macOS LaunchDaemons under `/Library/LaunchDaemons/`
 - Logs: `/var/log/unity-relay-tcp.log`, `/var/log/unity-relay-udp.log`
+- **Portable**: survives reboots, ISP changes, and moves to new subnets without reconfiguration
 
 ### Key variables
 | Variable | Where set | Value |
@@ -186,13 +190,19 @@ Use `launchctl bootstrap system <plist>` instead of `launchctl load`. Check stat
 
 ### UDP relay not working
 - Confirm Python script is running as root: `launchctl print system/com.showdropgo.unity-relay-udp`
-- Check Unity Intercom UDP binding: `lsof -nP -iUDP:20101` (run as root)
-- Unity's UDP only responds to RFC 1918 sources — relay must bind outgoing socket to `192.168.25.166`
+- Check detected LAN IP in logs: `tail /var/log/unity-relay-udp.log`
+- Check Unity Intercom UDP binding: `sudo lsof -nP -iUDP:20101`
+- Unity's UDP only responds to RFC 1918 sources — relay dynamically detects and binds to LAN IP
+
+### UDP relay cycling / clients dropping
+- Check logs for "Network change detected" — if firing too often, LAN may be unstable
+- Check for "Could not bind outgoing socket" — LAN IP may have changed between session create and sendto
+- Sessions are cleared on IP change; clients reconnect automatically within one poll cycle (15s)
 
 ### Vultr iptables rules
 - Check: `iptables -t nat -L PREROUTING -n --line-numbers`
 - Stale rules from old deploys may conflict — the `unity-relay` role clears managed ports before re-adding
 - "Connection refused" when testing from Vultr to its own public IP is expected (hairpin NAT) — test from an external host
 
-### Portability note
-`local_ip` (`192.168.25.166`) is DHCP-assigned at HMO. If the Mac Mini moves networks, update `host_vars/showdropgo-unityserver-macmini/vars.yml` and redeploy the relay role.
+### Mac Mini moved to a new network
+No action required. The UDP relay detects the new LAN IP within 15 seconds and all new sessions use the updated source IP. `local_ip` in `host_vars` is reference documentation only — it is not used by the relay at runtime.

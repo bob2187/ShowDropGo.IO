@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/socat</string>
-        <string>TCP4-LISTEN:{{ unity_local_relay_listen_port }},reuseaddr,fork,bind={{ tailscale_ip }}</string>
+        <string>TCP4-LISTEN:{{ unity_local_relay_listen_port }},reuseaddr,fork</string>
         <string>TCP4:{{ unity_local_relay_target_host }}:{{ unity_local_relay_target_port }}</string>
     </array>
     <key>RunAtLoad</key>

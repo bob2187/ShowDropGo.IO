@@ -1,31 +1,113 @@
 #!/usr/bin/env python3
 # Managed by Ansible — do not edit manually
-# Bidirectional UDP relay with session tracking.
-# Listens on Tailscale IP, maintains per-client sessions to Unity Intercom.
-# Binds outgoing sockets to local LAN IP so Unity sees RFC 1918 source.
+# Bidirectional UDP relay with dynamic LAN IP detection and network change monitoring.
+# Listens on all interfaces. Detects LAN IP via default route and binds outgoing
+# sockets to it so Unity Intercom sees RFC 1918 source and responds.
 import socket
 import threading
 import time
+import subprocess
+import logging
+import sys
 
-LISTEN_IP = "{{ tailscale_ip }}"
+logging.basicConfig(
+    stream=sys.stdout,
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s'
+)
+
 LISTEN_PORT = {{ unity_local_relay_listen_port }}
-TARGET_IP = "{{ local_ip }}"
 TARGET_PORT = {{ unity_local_relay_target_port }}
-SOURCE_IP = "{{ local_ip }}"
 SESSION_TIMEOUT = 60  # seconds of inactivity before closing session
+NETWORK_POLL_INTERVAL = 15  # seconds between LAN IP checks
 
-# Map: client_addr -> (proxy_socket, last_seen_timestamp)
+
+def get_lan_ip():
+    """Return the primary LAN IP by finding the default route interface.
+    Excludes loopback and Tailscale (utun*) interfaces."""
+    try:
+        route = subprocess.run(
+            ['route', '-n', 'get', 'default'],
+            capture_output=True, text=True
+        )
+        iface = None
+        for line in route.stdout.splitlines():
+            if 'interface:' in line:
+                iface = line.split()[-1].strip()
+                break
+        if not iface:
+            return None
+        ip_result = subprocess.run(
+            ['ipconfig', 'getifaddr', iface],
+            capture_output=True, text=True
+        )
+        ip = ip_result.stdout.strip()
+        return ip if ip else None
+    except Exception as e:
+        logging.warning(f"get_lan_ip failed: {e}")
+        return None
+
+
+current_lan_ip = get_lan_ip()
+logging.info(f"Starting relay on 0.0.0.0:{LISTEN_PORT}, LAN IP={current_lan_ip}, target=*:{TARGET_PORT}")
+
 sessions = {}
 sessions_lock = threading.Lock()
 
 server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind((LISTEN_IP, LISTEN_PORT))
+server.bind(('0.0.0.0', LISTEN_PORT))
 
 
-def cleanup_loop():
+def forward_from_target(client_addr, proxy_sock):
+    """Background thread: forward Unity Intercom responses back to the remote client."""
     while True:
-        time.sleep(15)
+        try:
+            data, _ = proxy_sock.recvfrom(65536)
+            server.sendto(data, client_addr)
+            with sessions_lock:
+                if client_addr in sessions:
+                    sessions[client_addr] = (proxy_sock, time.time())
+        except OSError:
+            break
+
+
+def get_or_create_session(client_addr, lan_ip):
+    with sessions_lock:
+        if client_addr in sessions:
+            sock, _ = sessions[client_addr]
+            sessions[client_addr] = (sock, time.time())
+            return sock
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if lan_ip:
+            try:
+                sock.bind((lan_ip, 0))
+            except OSError as e:
+                logging.warning(f"Could not bind outgoing socket to {lan_ip}: {e}")
+        sessions[client_addr] = (sock, time.time())
+        threading.Thread(target=forward_from_target,
+                         args=(client_addr, sock), daemon=True).start()
+        return sock
+
+
+def monitor_network():
+    """Detect LAN IP changes and clear sessions so they rebind with new source IP."""
+    global current_lan_ip
+    while True:
+        time.sleep(NETWORK_POLL_INTERVAL)
+        new_ip = get_lan_ip()
+        if new_ip and new_ip != current_lan_ip:
+            logging.info(f"Network change detected: {current_lan_ip} -> {new_ip}, clearing all sessions")
+            current_lan_ip = new_ip
+            with sessions_lock:
+                for sock, _ in sessions.values():
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
+                sessions.clear()
+        # Prune stale sessions
         now = time.time()
         with sessions_lock:
             stale = [addr for addr, (sock, ts) in sessions.items()
@@ -38,37 +120,13 @@ def cleanup_loop():
                 del sessions[addr]
 
 
-def forward_from_target(client_addr, proxy_sock):
-    """Background thread: forward Unity responses back to the remote client."""
-    while True:
-        try:
-            data, _ = proxy_sock.recvfrom(65536)
-            server.sendto(data, client_addr)
-            with sessions_lock:
-                if client_addr in sessions:
-                    sessions[client_addr] = (proxy_sock, time.time())
-        except OSError:
-            break
-
-
-def get_or_create_session(client_addr):
-    with sessions_lock:
-        if client_addr in sessions:
-            sock, _ = sessions[client_addr]
-            sessions[client_addr] = (sock, time.time())
-            return sock
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((SOURCE_IP, 0))  # Bind to LAN IP so Unity sees RFC 1918 source
-        sessions[client_addr] = (sock, time.time())
-        threading.Thread(target=forward_from_target,
-                         args=(client_addr, sock), daemon=True).start()
-        return sock
-
-
-threading.Thread(target=cleanup_loop, daemon=True).start()
+threading.Thread(target=monitor_network, daemon=True).start()
 
 while True:
     data, client_addr = server.recvfrom(65536)
-    sock = get_or_create_session(client_addr)
-    sock.sendto(data, (TARGET_IP, TARGET_PORT))
+    lan_ip = current_lan_ip
+    if not lan_ip:
+        logging.warning("No LAN IP available, dropping packet")
+        continue
+    sock = get_or_create_session(client_addr, lan_ip)
+    sock.sendto(data, (lan_ip, TARGET_PORT))
