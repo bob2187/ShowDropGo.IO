@@ -60,3 +60,5 @@
       tags: tailscale
     - role: showdropgo-macos-apps
       tags: apps
+    - role: unity-local-relay
+      tags: relay

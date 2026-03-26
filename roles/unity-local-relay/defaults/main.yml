@@ -1,0 +1,4 @@
+---
+unity_local_relay_listen_port: 20199
+unity_local_relay_target_port: 20101
+unity_local_relay_target_host: 127.0.0.1

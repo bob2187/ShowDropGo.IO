@@ -1,0 +1,12 @@
+---
+- name: Reload TCP relay
+  shell: |
+    launchctl bootout system /Library/LaunchDaemons/com.showdropgo.unity-relay-tcp.plist 2>/dev/null || true
+    launchctl bootstrap system /Library/LaunchDaemons/com.showdropgo.unity-relay-tcp.plist
+  become: true
+
+- name: Reload UDP relay
+  shell: |
+    launchctl bootout system /Library/LaunchDaemons/com.showdropgo.unity-relay-udp.plist 2>/dev/null || true
+    launchctl bootstrap system /Library/LaunchDaemons/com.showdropgo.unity-relay-udp.plist
+  become: true

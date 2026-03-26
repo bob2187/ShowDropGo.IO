@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+# Managed by Ansible — do not edit manually
+# Bidirectional UDP relay with session tracking.
+# Listens on Tailscale IP, maintains per-client sessions to Unity Intercom.
+# Binds outgoing sockets to local LAN IP so Unity sees RFC 1918 source.
+import socket
+import threading
+import time
+
+LISTEN_IP = "{{ tailscale_ip }}"
+LISTEN_PORT = {{ unity_local_relay_listen_port }}
+TARGET_IP = "{{ local_ip }}"
+TARGET_PORT = {{ unity_local_relay_target_port }}
+SOURCE_IP = "{{ local_ip }}"
+SESSION_TIMEOUT = 60  # seconds of inactivity before closing session
+
+# Map: client_addr -> (proxy_socket, last_seen_timestamp)
+sessions = {}
+sessions_lock = threading.Lock()
+
+server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind((LISTEN_IP, LISTEN_PORT))
+
+
+def cleanup_loop():
+    while True:
+        time.sleep(15)
+        now = time.time()
+        with sessions_lock:
+            stale = [addr for addr, (sock, ts) in sessions.items()
+                     if now - ts > SESSION_TIMEOUT]
+            for addr in stale:
+                try:
+                    sessions[addr][0].close()
+                except OSError:
+                    pass
+                del sessions[addr]
+
+
+def forward_from_target(client_addr, proxy_sock):
+    """Background thread: forward Unity responses back to the remote client."""
+    while True:
+        try:
+            data, _ = proxy_sock.recvfrom(65536)
+            server.sendto(data, client_addr)
+            with sessions_lock:
+                if client_addr in sessions:
+                    sessions[client_addr] = (proxy_sock, time.time())
+        except OSError:
+            break
+
+
+def get_or_create_session(client_addr):
+    with sessions_lock:
+        if client_addr in sessions:
+            sock, _ = sessions[client_addr]
+            sessions[client_addr] = (sock, time.time())
+            return sock
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((SOURCE_IP, 0))  # Bind to LAN IP so Unity sees RFC 1918 source
+        sessions[client_addr] = (sock, time.time())
+        threading.Thread(target=forward_from_target,
+                         args=(client_addr, sock), daemon=True).start()
+        return sock
+
+
+threading.Thread(target=cleanup_loop, daemon=True).start()
+
+while True:
+    data, client_addr = server.recvfrom(65536)
+    sock = get_or_create_session(client_addr)
+    sock.sendto(data, (TARGET_IP, TARGET_PORT))

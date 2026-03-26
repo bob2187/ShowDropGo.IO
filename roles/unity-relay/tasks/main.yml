@@ -36,7 +36,7 @@
     protocol: tcp
     destination_port: "{{ item }}"
     jump: DNAT
-    to_destination: "{{ unity_relay_target_ip }}:{{ item }}"
+    to_destination: "{{ unity_relay_target_ip }}:{{ unity_relay_target_port | default(item) }}"
     state: present
   loop: "{{ unity_relay_ports }}"
   notify: Save iptables rules
@@ -48,7 +48,7 @@
     protocol: udp
     destination_port: "{{ item }}"
     jump: DNAT
-    to_destination: "{{ unity_relay_target_ip }}:{{ item }}"
+    to_destination: "{{ unity_relay_target_ip }}:{{ unity_relay_target_port | default(item) }}"
     state: present
   loop: "{{ unity_relay_ports }}"
   notify: Save iptables rules
@@ -63,4 +63,4 @@
 
 - name: Display forwarding configuration
   debug:
-    msg: "Forwarding ports {{ unity_relay_ports | join(', ') }} (TCP/UDP) to {{ unity_relay_target_ip }}"
+    msg: "Forwarding ports {{ unity_relay_ports | join(', ') }} (TCP/UDP) to {{ unity_relay_target_ip }}:{{ unity_relay_target_port | default('same port') }}"

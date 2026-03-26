@@ -1,0 +1,69 @@
+---
+# unity-local-relay: Local proxy that makes remote Tailscale traffic appear to
+# Unity Intercom as local connections.
+# TCP: socat listens on tailscale_ip:listen_port → 127.0.0.1:target_port
+# UDP: Python script listens on tailscale_ip:listen_port → local_ip:target_port
+#      (Unity Intercom UDP does not bind on loopback, requires LAN IP as target)
+
+- name: Install socat via Homebrew
+  community.general.homebrew:
+    name: socat
+    state: present
+  become: false
+
+- name: Create /usr/local/bin directory
+  file:
+    path: /usr/local/bin
+    state: directory
+    owner: root
+    group: wheel
+    mode: '0755'
+  become: true
+
+- name: Deploy UDP relay Python script
+  template:
+    src: unity-udp-relay.py.j2
+    dest: /usr/local/bin/unity-udp-relay.py
+    owner: root
+    group: wheel
+    mode: '0755'
+  become: true
+  notify: Reload UDP relay
+
+- name: Deploy TCP relay LaunchDaemon
+  template:
+    src: unity-relay-tcp.plist.j2
+    dest: /Library/LaunchDaemons/com.showdropgo.unity-relay-tcp.plist
+    owner: root
+    group: wheel
+    mode: '0644'
+  become: true
+  notify: Reload TCP relay
+
+- name: Deploy UDP relay LaunchDaemon
+  template:
+    src: unity-relay-udp.plist.j2
+    dest: /Library/LaunchDaemons/com.showdropgo.unity-relay-udp.plist
+    owner: root
+    group: wheel
+    mode: '0644'
+  become: true
+  notify: Reload UDP relay
+
+- name: Load TCP relay LaunchDaemon
+  shell: |
+    launchctl bootout system /Library/LaunchDaemons/com.showdropgo.unity-relay-tcp.plist 2>/dev/null || true
+    launchctl bootstrap system /Library/LaunchDaemons/com.showdropgo.unity-relay-tcp.plist
+  become: true
+
+- name: Load UDP relay LaunchDaemon
+  shell: |
+    launchctl bootout system /Library/LaunchDaemons/com.showdropgo.unity-relay-udp.plist 2>/dev/null || true
+    launchctl bootstrap system /Library/LaunchDaemons/com.showdropgo.unity-relay-udp.plist
+  become: true
+
+- name: Display relay status
+  debug:
+    msg:
+      - "TCP relay: {{ tailscale_ip }}:{{ unity_local_relay_listen_port }} → 127.0.0.1:{{ unity_local_relay_target_port }}"
+      - "UDP relay: {{ tailscale_ip }}:{{ unity_local_relay_listen_port }} → {{ local_ip }}:{{ unity_local_relay_target_port }}"
