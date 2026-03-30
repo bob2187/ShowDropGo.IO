@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.showdropgo.remote-desktop</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ sdg_rdp_server_bin }}</string>
+        <string>-addr</string>
+        <string>{{ sdg_rdp_listen_addr }}:{{ sdg_rdp_port }}</string>
+        <string>-capture</string>
+        <string>{{ sdg_rdp_capture_bin }}</string>
+        <string>-client</string>
+        <string>{{ sdg_rdp_client_dir }}</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>{{ sdg_rdp_log }}</string>
+    <key>StandardErrorPath</key>
+    <string>{{ sdg_rdp_log }}</string>
+
+    <!-- Must run as root for ScreenCaptureKit + CGEventPost -->
+    <key>UserName</key>
+    <string>root</string>
+</dict>
+</plist>

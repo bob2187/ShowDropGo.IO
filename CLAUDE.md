@@ -1,5 +1,20 @@
 # Project Reference for Claude
 
+> **SESSION START — SYNC ALL CLAUDE.md FILES FIRST**
+> Before doing any other work, sync Drive ↔ local for all showdropgo projects (overwrite only, never delete):
+>
+> | Project | Local Path | Drive File ID |
+> |---------|-----------|---------------|
+> | showdropgo-infra | `/Users/robertstephen/showdropgo-infra/CLAUDE.md` | `1dpf1f1NU1Mf125aoiLirVKwsG8-7ZGLO` |
+> | showdropgo-docs | `/Users/robertstephen/showdropgo-docs/CLAUDE.md` | `1eE1EBpcByFA7cExPWbzl6KmVmLmQqbeU` |
+>
+> Steps: download each Drive file → diff → overwrite local if Drive is newer; push local → Drive if local has changes not on Drive.
+
+> **SYNC NOTE:** This file is mirrored in Google Drive. After any edits, sync both copies:
+> - **Local → Drive:** `mcp__google-drive__updateTextFile` · file ID `1dpf1f1NU1Mf125aoiLirVKwsG8-7ZGLO`
+> - **Drive → Local:** read the Drive file and overwrite `/Users/robertstephen/showdropgo-infra/CLAUDE.md`
+> - Always update both at the same time. Never let one get ahead of the other.
+
 ## Overview
 Ansible playbooks for ShowDropGo production infrastructure: a Mac Mini Unity Intercom server (HMO location) and a Vultr cloud VM relay. All devices connected via Tailscale VPN.
 
@@ -152,9 +167,10 @@ Unity Intercom's UDP discovery only responds to RFC 1918 source IPs. Traffic arr
 
 ### showdropgo-macos-apps
 - Homebrew formulae: `cloudflared`
-- Homebrew casks: `google-chrome`, `sonobus`, `amphetamine`, `loopback`
+- Homebrew casks: `google-chrome`, `sonobus`, `loopback` (Amphetamine is Mac App Store only)
 - PKG installers (place in `roles/showdropgo-macos-apps/files/`):
   - `unity-intercom.pkg`, `dante-virtual-soundcard.pkg`, `dante-via.pkg`
+- Ensures macOS Screen Sharing (VNC, port 5900) is enabled and running
 
 ### unity-relay
 - iptables DNAT for port forwarding on Vultr
@@ -164,7 +180,9 @@ Unity Intercom's UDP discovery only responds to RFC 1918 source IPs. Traffic arr
 - Installs socat via Homebrew
 - Deploys Python UDP relay script to `/usr/local/bin/unity-udp-relay.py`
 - Deploys LaunchDaemons for TCP (socat) and UDP (Python)
+- Deploys LaunchAgent (`com.showdropgo.unity-restart-on-login`) — waits for Tailscale, restarts Unity, dismisses port forwarding dialog
 - Uses `launchctl bootstrap/bootout system` for service management
+- Logs: `/var/log/unity-relay-tcp.log`, `/var/log/unity-relay-udp.log`, `/tmp/unity-restart.log`
 
 ### cloudflare-dns
 - Manages DNS records via Cloudflare API
@@ -187,6 +205,12 @@ Pass `--ssh-extra-args="-o IdentitiesOnly=yes"` to force use of the specified ke
 
 ### LaunchDaemon service not starting (macOS 15)
 Use `launchctl bootstrap system <plist>` instead of `launchctl load`. Check status with `launchctl print system/<label>`.
+
+### Unity port forwarding test shows "Neither UDP or TCP are forwarded properly"
+This is expected and can be ignored. Unity's built-in test checks for UPnP/router-level NAT, which our custom relay chain (Vultr DNAT → Tailscale → local relay → Unity) does not set up. If phone clients connect successfully, the relay is working correctly.
+
+### Relay not working after Mac Mini reboot (works after restarting Unity)
+Root cause: Unity Intercom starts at login before Tailscale connects, and initialises without external network connectivity. Fix: a LaunchAgent (`com.showdropgo.unity-restart-on-login`) waits for Tailscale to connect (polls `tailscale status` every 5s, up to 3 min), then gracefully quits and relaunches Unity, and auto-dismisses the port forwarding warning dialog. Check logs: `cat /tmp/unity-restart.log`.
 
 ### UDP relay not working
 - Confirm Python script is running as root: `launchctl print system/com.showdropgo.unity-relay-udp`

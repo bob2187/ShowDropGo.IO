@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShowDropGo Remote Desktop</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: system-ui, sans-serif;
+  }
+  #screen {
+    display: block;
+    cursor: none;
+  }
+  #overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.85);
+    color: #fff;
+    font-size: 13px;
+    padding: 8px 14px;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    z-index: 10;
+    transition: opacity 0.3s;
+  }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  #status { color: #aaa; }
+  #status.ok { color: #4caf50; }
+  #status.err { color: #f44336; }
+  .tip { color: #666; font-size: 11px; margin-left: auto; }
+</style>
+</head>
+<body>
+<div id="overlay">
+  <strong>ShowDropGo</strong>
+  <span id="status">Connecting…</span>
+  <span class="tip">Move mouse to hide toolbar · Paste with Ctrl+V</span>
+</div>
+<canvas id="screen"></canvas>
+
+<script>
+'use strict';
+
+const canvas  = document.getElementById('screen');
+const ctx     = canvas.getContext('2d');
+const status  = document.getElementById('status');
+const overlay = document.getElementById('overlay');
+
+// Remote screen dimensions (updated on first frame decode)
+let remoteW = 1920, remoteH = 1080;
+let firstFrame = true;
+
+// ─── WebSocket + VideoDecoder ────────────────────────────────────────────────
+
+let ws, decoder;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    setStatus('Connected', 'ok');
+    initDecoder();
+    startPing();
+  };
+
+  ws.onclose = () => {
+    setStatus('Disconnected — reconnecting…', 'err');
+    decoder?.close();
+    decoder = null;
+    setTimeout(connect, 2500);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = e => {
+    if (e.data instanceof ArrayBuffer) {
+      handleVideoFrame(e.data);
+    } else {
+      handleControl(JSON.parse(e.data));
+    }
+  };
+}
+
+function initDecoder() {
+  if (decoder) { try { decoder.close(); } catch (_) {} }
+
+  decoder = new VideoDecoder({
+    output: frame => {
+      const w = frame.displayWidth;
+      const h = frame.displayHeight;
+      if (w !== remoteW || h !== remoteH || firstFrame) {
+        remoteW = w;
+        remoteH = h;
+        canvas.width  = w;
+        canvas.height = h;
+        fitCanvas();
+        firstFrame = false;
+      }
+      ctx.drawImage(frame, 0, 0);
+      frame.close();
+    },
+    error: err => {
+      console.warn('VideoDecoder error:', err);
+      // Re-init decoder; next keyframe will resync
+      setTimeout(initDecoder, 100);
+    }
+  });
+
+  decoder.configure({
+    codec: 'avc1.4D401F',   // H.264 Main Profile Level 3.1
+    optimizeForLatency: true,
+  });
+}
+
+function handleVideoFrame(buf) {
+  if (!decoder || decoder.state === 'closed') return;
+
+  const view    = new Uint8Array(buf);
+  const flags   = view[0];
+  const isKey   = (flags & 0x01) !== 0;
+  const payload = buf.slice(1);
+
+  try {
+    decoder.decode(new EncodedVideoChunk({
+      type: isKey ? 'key' : 'delta',
+      timestamp: performance.now() * 1000,
+      data: payload,
+    }));
+  } catch (err) {
+    console.warn('decode error:', err);
+    initDecoder();
+  }
+}
+
+function handleControl(msg) {
+  switch (msg.type) {
+    case 'clipboard':
+      navigator.clipboard.writeText(msg.text).catch(() => {});
+      break;
+    case 'resize':
+      remoteW = msg.w;
+      remoteH = msg.h;
+      canvas.width  = remoteW;
+      canvas.height = remoteH;
+      fitCanvas();
+      break;
+  }
+}
+
+// ─── Input events ────────────────────────────────────────────────────────────
+
+// Map browser KeyboardEvent.keyCode → macOS CGKeyCode
+const KEY_MAP = {
+  // Letters
+  65:0,  83:1,  68:2,  70:3,  72:4,  71:5,  90:6,  88:7,  67:8,
+  86:9,  66:11, 81:12, 87:13, 69:14, 82:15, 89:16, 84:17,
+  85:32, 73:34, 80:35, 76:37, 74:38, 79:31, 75:40, 78:45, 77:46,
+  // Numbers (top row)
+  49:18, 50:19, 51:20, 52:21, 53:23, 54:22, 55:26, 56:28, 57:25, 48:29,
+  // Punctuation
+  59:41, 186:41, // ;
+  61:24, 187:24, // =
+  44:43, 188:43, // ,
+  45:27, 189:27, // -
+  46:47, 190:47, // .
+  47:44, 191:44, // /
+  96:50, 192:50, // `
+  91:33, 219:33, // [
+  92:42, 220:42, // \
+  93:30, 221:30, // ]
+  39:39, 222:39, // '
+  // Special
+  32:49,  13:36,  9:48,   8:51,  27:53,
+  37:123, 39:124, 38:126, 40:125,
+  46:117, 36:115, 35:119, 33:116, 34:121,
+  // Modifiers
+  16:56, 17:59, 18:58, 91:55, 93:54,
+  // F-keys
+  112:122,113:120,114:99, 115:118,116:96, 117:97,
+  118:98, 119:100,120:101,121:109,122:103,123:111,
+};
+
+// CGEventFlags bitmask values
+const FLAG_SHIFT   = 0x20000;
+const FLAG_CTRL    = 0x40000;
+const FLAG_ALT     = 0x80000;
+const FLAG_CMD     = 0x100000;
+
+function eventFlags(e) {
+  let f = 0;
+  if (e.shiftKey) f |= FLAG_SHIFT;
+  if (e.ctrlKey)  f |= FLAG_CTRL;
+  if (e.altKey)   f |= FLAG_ALT;
+  if (e.metaKey)  f |= FLAG_CMD;
+  return f;
+}
+
+function canvasPos(e) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (remoteW / r.width),
+    y: (e.clientY - r.top)  * (remoteH / r.height),
+  };
+}
+
+canvas.addEventListener('pointermove', e => {
+  const p = canvasPos(e);
+  send({ type: 'mouse', ...p, buttons: e.buttons, dx: 0, dy: 0 });
+});
+
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  canvas.focus();
+  const p = canvasPos(e);
+  send({ type: 'mouse', ...p, buttons: e.buttons, dx: 0, dy: 0 });
+});
+
+canvas.addEventListener('pointerup', e => {
+  const p = canvasPos(e);
+  send({ type: 'mouse', ...p, buttons: 0, dx: 0, dy: 0 });
+});
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  send({ type: 'mouse', x: 0, y: 0, buttons: 0, dx: e.deltaX, dy: e.deltaY });
+}, { passive: false });
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.setAttribute('tabindex', '0');
+
+document.addEventListener('keydown', e => {
+  e.preventDefault();
+  const mac = KEY_MAP[e.keyCode];
+  if (mac !== undefined) {
+    send({ type: 'key', keycode: e.keyCode, down: true, flags: eventFlags(e) });
+  }
+});
+
+document.addEventListener('keyup', e => {
+  e.preventDefault();
+  const mac = KEY_MAP[e.keyCode];
+  if (mac !== undefined) {
+    send({ type: 'key', keycode: e.keyCode, down: false, flags: eventFlags(e) });
+  }
+});
+
+// Clipboard: browser → remote (Ctrl+V / Cmd+V triggers paste event)
+document.addEventListener('paste', e => {
+  const text = e.clipboardData?.getData('text');
+  if (text) send({ type: 'clipboard', text });
+});
+
+// ─── Toolbar hide on mouse activity ─────────────────────────────────────────
+
+let hideTimer;
+document.addEventListener('mousemove', () => {
+  overlay.classList.remove('hidden');
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => overlay.classList.add('hidden'), 3000);
+});
+
+// ─── Canvas sizing ───────────────────────────────────────────────────────────
+
+function fitCanvas() {
+  const scaleX = window.innerWidth  / remoteW;
+  const scaleY = window.innerHeight / remoteH;
+  const scale  = Math.min(scaleX, scaleY);
+  canvas.style.width  = `${remoteW * scale}px`;
+  canvas.style.height = `${remoteH * scale}px`;
+}
+
+window.addEventListener('resize', fitCanvas);
+fitCanvas();
+
+// ─── Keepalive ping (Cloudflare tunnels close idle WS after ~100s) ───────────
+
+function startPing() {
+  setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN) send({ type: 'ping' });
+  }, 30_000);
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function send(msg) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+function setStatus(msg, cls = '') {
+  status.textContent = msg;
+  status.className   = cls;
+}
+
+connect();
+</script>
+</body>
+</html>

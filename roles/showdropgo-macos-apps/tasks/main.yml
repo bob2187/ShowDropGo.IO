@@ -6,7 +6,11 @@
     name:
       - tailscale      # managed by tailscale-macos role, listed here for reference
       - cloudflared    # Cloudflare Tunnel
+      - node           # required for Claude Code
     state: present
+  environment:
+    HOMEBREW_NO_AUTO_UPDATE: "1"
+    HOMEBREW_NO_ENV_HINTS: "1"
   become: false
 
 - name: Install Homebrew casks
@@ -14,9 +18,14 @@
     name:
       - google-chrome
       - sonobus
-      - amphetamine
       - loopback
+      # NOTE: Amphetamine is Mac App Store only — install manually:
+      #   https://apps.apple.com/us/app/amphetamine/id937984704
     state: present
+    install_options: "adopt"
+  environment:
+    HOMEBREW_NO_AUTO_UPDATE: "1"
+    HOMEBREW_NO_ENV_HINTS: "1"
   become: false
 
 # Stored PKG installers (licensed/commercial apps)
@@ -47,3 +56,22 @@
   loop: "{{ pkg_files.results }}"
   when: item.stat.exists
   become: true
+
+# Claude Code CLI
+- name: Install Claude Code globally
+  community.general.npm:
+    name: "@anthropic-ai/claude-code"
+    global: true
+    state: present
+  become: false
+
+# Ensure macOS built-in Screen Sharing (VNC) is enabled on port 5900
+- name: Enable macOS Screen Sharing
+  command: launchctl enable system/com.apple.screensharing
+  become: true
+  ignore_errors: true
+
+- name: Start macOS Screen Sharing
+  command: launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist
+  become: true
+  ignore_errors: true

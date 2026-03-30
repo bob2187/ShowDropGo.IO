@@ -1,0 +1,54 @@
+---
+- name: Ensure client directory exists
+  file:
+    path: "{{ sdg_rdp_client_dir }}"
+    state: directory
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+
+- name: Copy Go server binary
+  copy:
+    src: sdg-rdp-server
+    dest: "{{ sdg_rdp_server_bin }}"
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+  notify: Restart sdg-rdp
+
+- name: Copy Swift capture binary
+  copy:
+    src: sdg-rdp-capture
+    dest: "{{ sdg_rdp_capture_bin }}"
+    owner: root
+    group: wheel
+    mode: "0755"
+  become: true
+  notify: Restart sdg-rdp
+
+- name: Copy browser client
+  copy:
+    src: index.html
+    dest: "{{ sdg_rdp_client_dir }}/index.html"
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+
+- name: Deploy LaunchDaemon plist
+  template:
+    src: sdg-rdp.plist.j2
+    dest: /Library/LaunchDaemons/com.showdropgo.remote-desktop.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  notify: Restart sdg-rdp
+
+- name: Bootstrap LaunchDaemon
+  shell: |
+    launchctl bootout system /Library/LaunchDaemons/com.showdropgo.remote-desktop.plist 2>/dev/null || true
+    launchctl bootstrap system /Library/LaunchDaemons/com.showdropgo.remote-desktop.plist
+  become: true

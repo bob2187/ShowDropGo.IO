@@ -1,0 +1,7 @@
+---
+sdg_rdp_listen_addr: "127.0.0.1"
+sdg_rdp_port: 8080
+sdg_rdp_capture_bin: /usr/local/bin/sdg-rdp-capture
+sdg_rdp_server_bin: /usr/local/bin/sdg-rdp-server
+sdg_rdp_client_dir: /usr/local/share/sdg-rdp
+sdg_rdp_log: /var/log/sdg-rdp.log
